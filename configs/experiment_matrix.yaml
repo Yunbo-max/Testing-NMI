@@ -1,0 +1,51 @@
+experiment_id: qwen38-ced-48h-v1
+base_model: Qwen/Qwen3.8-27B
+base_revision: PIN_AT_EXECUTION
+model_type: qwen3_5
+hardware_assumption: '1x NVIDIA H100 80GB'
+language_only_primary: true
+num_layers: 64
+hidden_size: 5120
+encoder_last_layer_1based: 32
+full_attention_layer_ids_1based: [4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64]
+late_reader_layer_ids_1based: [36, 40, 44, 48, 52, 56, 60, 64]
+kv_heads: 4
+kv_head_dim: 256
+attention_q_heads: 24
+rotary_dim: 64
+beta_variants:
+  B0: {mode: original, training: false, expected_unique_gqa_groups: 16}
+  B0T: {mode: original, status: planned, training: true, expected_unique_gqa_groups: 16, matched_data: true}
+  B1a: {mode: late_pairs, status: planned, training: true, expected_unique_gqa_groups: 12, matched_data: true}
+  B1b: {mode: late_all_share, status: local_cpu_tested, training: true, expected_unique_gqa_groups: 9, matched_data: true}
+  B1q: {mode: original_kv_quant, status: planned, training: false, expected_unique_gqa_groups: 16, optional: true}
+  B1s: {mode: late_all_share_sparse, status: planned, training: true, optional: true, beyond_48h: true}
+  B2: {mode: state_reconstruction_full_ced, status: planned, training: true, beyond_48h: true, hypothesis_only: true}
+training_pilot:
+  dtype: bf16
+  optimizer: adamw
+  micro_batch: 1
+  grad_accum: 1
+  seq_len: 128
+  initial_projector_lr: 0.0002
+  warmup_steps: 100
+  lora_rank: null  # not implemented in B1b; future control
+  lora_alpha: null  # not implemented in B1b; future control
+  clip_grad_norm: 1.0
+  seed: 1337
+  teacher_temperature: 2.0
+  loss_weights: {causal_ce: 1.0, logit_kl: null, attention_feature: null} # CE only in end-to-end B1b; teacher feature warmup separate
+  enable_teacher_distill_only_if_fit: false # logits distillation not implemented
+  no_automatic_full_finetune: true
+benchmark:
+  lengths: [1024, 8192, 32768]
+  decode_new_tokens: [256, 256, 512]
+  bf16: true
+  warmup_repeats: 3
+  paired_repeats: 10
+  outputs: [heldout_ce, teacher_kl, task_accuracy, peak_vram, unique_kv_bytes, prefill_ms, decode_tokens_per_s]
+quality_guardrails:
+  max_relative_ce_increase_vs_trained_control: 0.05
+  zero_future_leakage_required: true
+  incremental_vs_full_parity_required: true
+  physical_kv_reuse_required: true

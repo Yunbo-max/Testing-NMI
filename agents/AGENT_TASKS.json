@@ -1,0 +1,119 @@
+{
+  "project": "qwen38-ced-48h-v1",
+  "scope": "48h B1 implementation and training launch; full CED is a later hypothesis",
+  "edition": "Research Autopilot Human-AI/main, pinned commit at execution",
+  "gpu": "1x H100 80GB, exclusive slots, actual permission required",
+  "github_policy": "read/push files and ordinary logs only; never Actions, workflows, dispatch",
+  "tasks": [
+    {
+      "id": "A01",
+      "role": "paper-auditor",
+      "deps": [],
+      "gpu": false,
+      "deadline_h": 6,
+      "deliverables": [
+        "DeepSeek CED eq and CSA2 modes source/path map",
+        "Qwen3.8 module+cache map",
+        "CED-vs-hybrid-GDN dependency proof",
+        "explicit gaps between paper and released code"
+      ],
+      "acceptance": "each claim links pinned source; independently reviewed"
+    },
+    {
+      "id": "A02",
+      "role": "infra-baseline",
+      "deps": [],
+      "gpu": true,
+      "deadline_h": 8,
+      "deliverables": [
+        "H100 and model revision receipt",
+        "B0 baseline logits/CE, prefill/decode and memory logs",
+        "GDN state and Qwen cache shapes"
+      ],
+      "acceptance": "unmodified 27B evaluated with exact commands and verified exit codes"
+    },
+    {
+      "id": "A03",
+      "role": "reference-implementer",
+      "deps": [
+        "A01"
+      ],
+      "gpu": false,
+      "deadline_h": 15,
+      "deliverables": [
+        "toy CED/CSA2 causal reference",
+        "unit causal, full-vs-incremental, gradient tests",
+        "twelve local CPU tests passed; real HF source integration pending"
+      ],
+      "acceptance": "no future information leakage; test run logs"
+    },
+    {
+      "id": "A04",
+      "role": "qwen-adapter-implementer",
+      "deps": [
+        "A01",
+        "A02",
+        "A03"
+      ],
+      "gpu": true,
+      "deadline_h": 26,
+      "deliverables": [
+        "H32-to-shared-global-KV adapter",
+        "8 late GQA read hook",
+        "real per-layer GDN preservation",
+        "original-mode fallback"
+      ],
+      "acceptance": "27B short path passes, no invalid cache writes"
+    },
+    {
+      "id": "A05",
+      "role": "independent-checker",
+      "deps": [
+        "A04"
+      ],
+      "gpu": true,
+      "deadline_h": 34,
+      "deliverables": [
+        "physical unique cache bytes",
+        "mask, rotary, cache length tests",
+        "paired B0 vs B1 diagnostics"
+      ],
+      "acceptance": "not self-approved by A04; rerun raw evidence"
+    },
+    {
+      "id": "A06",
+      "role": "training-implementer",
+      "deps": [
+        "A02",
+        "A04"
+      ],
+      "gpu": true,
+      "deadline_h": 42,
+      "deliverables": [
+        "feature target extractor",
+        "trainable projector + optional LoRA",
+        "bounded optimizer step and checkpoint"
+      ],
+      "acceptance": "real Qwen features + projector warmup, then a finite nonzero gradient update on real 27B; initial CPU synthetic feature smoke is not evidence for 27B"
+    },
+    {
+      "id": "A07",
+      "role": "experiment-owner",
+      "deps": [
+        "A05",
+        "A06"
+      ],
+      "gpu": true,
+      "deadline_h": 48,
+      "deliverables": [
+        "registered baseline/control/treatment splits",
+        "paired experiment configurations",
+        "actual train launch with verified PID or scheduler id",
+        "checkpoint + full logs"
+      ],
+      "acceptance": "G0-G4 gates satisfied on actual H100 or explicitly blocked with raw log; B0T/CSA2 not presented as implemented"
+    }
+  ],
+  "recurrence": "No background tasks or live process are claimed by this file; actual GPU host runner must be launched and verified.",
+  "current_status": "source_local_cpu_tested_not_H100_tested"
+}

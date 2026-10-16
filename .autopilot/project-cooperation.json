@@ -1,0 +1,13 @@
+{
+  "project_id": "qwen38-ced-h100-48h-20261016",
+  "repository": "Yunbo-max/Testing-NMI",
+  "coordination_branch": "main",
+  "project_root": ".",
+  "scope": "Human-approved Qwen3.8-27B B1 cross-layer shared-KV implementation and H100 validation; B2 separate decision",
+  "selected_edition": "Research_Autopilot/main Human-AI",
+  "status": "source-local-cpu-validated-h100-not-started",
+  "participants": [],
+  "notes": "Initial project manifest only, not a registered live runner or a fabricated task claim. Claim and register on the real GPU host before parallel work. No GitHub Actions.",
+  "tasks_source": "agents/AGENT_TASKS.json",
+  "evidence_source": "results/LOCAL_CPU_VALIDATION.json"
+}

@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+*.safetensors
+*.gguf
+*.pt
+*.pth
+*.bin
+*.ckpt
+checkpoints/
+artifacts/
+training_data/
+results/runs/
+logs/h100/
+*.log.local

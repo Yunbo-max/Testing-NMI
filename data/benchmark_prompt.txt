@@ -1,0 +1,1 @@
+In a software library, a configuration value is read by several different modules. Explain the difference between storing one shared immutable representation of that configuration and each module computing a different derived representation. Give one concrete test to verify the shared representation is not accidentally duplicated.

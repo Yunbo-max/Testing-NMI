@@ -1,0 +1,19 @@
+{
+  "timestamp_utc": "2026-10-16T18:21:06.130219+00:00",
+  "host": "container CPU",
+  "git_revision": "repository not yet published",
+  "commands": [
+    "PYTHONPATH=src python -m pytest -q tests",
+    "PYTHONPATH=src python scripts/train_feature_projector.py --features /mnt/data/nmi_smoke_features --out /mnt/data/nmi_smoke_output --steps 2 --batch-positions 4"
+  ],
+  "outcomes": {
+    "unit_tests": "12 passed",
+    "synthetic_warmup": "2 steps finite; not real Qwen features"
+  },
+  "limitations": [
+    "no transformers installed",
+    "no H100 attached",
+    "no 27B checkpoint tested",
+    "no actual scientific benchmark"
+  ]
+}

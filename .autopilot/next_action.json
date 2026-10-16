@@ -1,0 +1,12 @@
+{
+  "task_id": "A02",
+  "status": "pending_actual_H100",
+  "action": "Run a pinned Qwen3.8-27B baseline and validate source-compatible cache shapes on actual 1xH100 80GB",
+  "command": "python scripts/model_probe.py && python scripts/h100_preflight.py --out results/preflight_h100.json && python scripts/benchmark.py --arm base --revision $MODEL_REVISION --prompt-file data/benchmark_prompt.txt --max-context 512 --decode-steps 16",
+  "model_revision": "unknown_until_real_HF_probe",
+  "gpu_job_id": null,
+  "attempts": 0,
+  "last_verified": "local_cpu_unit_tests_12_passed",
+  "blocked_by": ["actual H100 host not connected", "real training/validation JSONL not provided on host"],
+  "next_after_success": "A04 real 27B patched forward, cache and gradient tests, then A06 training"
+}

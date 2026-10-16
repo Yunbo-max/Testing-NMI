@@ -1,0 +1,3 @@
+{"text":"A causal Transformer predicts each next token using only its prefix. Cache compression should be evaluated against a strong baseline."}
+{"text":"The shared key value cache is produced by an encoder boundary representation. Decoder queries remain layer dependent."}
+{"text":"Gated DeltaNet stores recurrent states; cross layer attention cache sharing does not reconstruct those recurrent states."}
