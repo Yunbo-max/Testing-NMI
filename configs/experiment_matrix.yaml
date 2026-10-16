@@ -21,6 +21,22 @@ beta_variants:
   B1q: {mode: original_kv_quant, status: planned, training: false, expected_unique_gqa_groups: 16, optional: true}
   B1s: {mode: late_all_share_sparse, status: planned, training: true, optional: true, beyond_48h: true}
   B2: {mode: state_reconstruction_full_ced, status: planned, training: true, beyond_48h: true, hypothesis_only: true}
+initialization_policy:
+  original_qwen_weights: official_pretrained_pinned_revision
+  first_stage_backbone_trainable: false
+  bridge_from_hidden_layer_1based: 32
+  source_pretrained_gqa_layer_1based: 36
+  default_bridge_linear_weights: source36
+  alternate_bridge_linear_weights: random_linear
+  native_key_norm_copied_for_both: true
+  feature_extraction_stage: implemented_h100_not_verified
+  offline_feature_warmup: implemented
+  causal_ce_stage: implemented_h100_not_verified
+  teacher_logit_kl_stage: planned_not_implemented
+  q_o_lora_stage: planned_not_implemented
+  b0t_matched_trained_control: planned_not_implemented
+  full_27b_training_from_scratch: excluded
+  checkpoint_origin_logged_when_available: true
 training_pilot:
   dtype: bf16
   optimizer: adamw
