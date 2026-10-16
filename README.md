@@ -14,35 +14,35 @@ The DeepSeek report combines **CED** (separate production of decoder global memo
 
 ### Mathematical derivation
 
-Let \(H_{\ell,t}\) be the representation of token \(t\) after layer \(\ell\). For every original late GQA reader \(\ell\in\mathcal R=\{36,40,44,48,52,56,60,64\}\), the ordinary cache contains layer-dependent values (schematically):
+Let $H_{\ell,t}$ be the representation of token $t$ after layer $\ell$. For every original late GQA reader $\ell\in\mathcal R=\{36,40,44,48,52,56,60,64\}$, the ordinary cache contains layer-dependent values (schematically):
 
-\[
+$$
 K_{\ell,t}=\operatorname{RoPE}\!\left(\operatorname{KNorm}_{\ell}(W^K_{\ell}\operatorname{LN}_{\ell}(H_{\ell-1,t}))\right),\qquad
 V_{\ell,t}=W^V_{\ell}\operatorname{LN}_{\ell}(H_{\ell-1,t}).
-\]
+$$
 
-**B1b hypothesis:** replace those eight persistent late K/V caches by one trainable projection of the encoder boundary \(E_t=H_{32,t}\):
+**B1b hypothesis:** replace those eight persistent late K/V caches by one trainable projection of the encoder boundary $E_t=H_{32,t}$:
 
-\[
+$$
 \tilde K_t=\operatorname{RoPE}\!\left(\operatorname{KNorm}_{\phi}(W^K_{\phi}E_t)\right),\qquad
 \tilde V_t=W^V_{\phi}E_t,\qquad
 M_t=M_{t-1}\mathbin{\|}(\tilde K_t,\tilde V_t).
-\]
+$$
 
-Here \(\|\) is **append along time**, not a fixed-size linear-attention recurrent update and not aggregation of all 32 encoder-layer KV caches. Each late reader keeps its own \(Q_{\ell,t}\), attention weights, output gate and FFN while reading the shared \(M_t\). GDN recurrent/conv states remain per-layer.
+Here $\|$ is **append along time**, not a fixed-size linear-attention recurrent update and not aggregation of all 32 encoder-layer KV caches. Each late reader keeps its own $Q_{\ell,t}$, attention weights, output gate and FFN while reading the shared $M_t$. GDN recurrent/conv states remain per-layer.
 
-**What can be lost?** Prior to training, extract the eight original **pre-RoPE** (K-normalized) K/V teacher targets \(Y_{\ell,t}\) at the same token positions. Any single shared predictor \(g(E_t)\) has the exact per-sample identity:
+**What can be lost?** Prior to training, extract the eight original **pre-RoPE** (K-normalized) K/V teacher targets $Y_{\ell,t}$ at the same token positions. Any single shared predictor $g(E_t)$ has the exact per-sample identity:
 
-\[
+$$
 \frac1{|\mathcal R|}\sum_{\ell\in\mathcal R}\|g(E_t)-Y_{\ell,t}\|_2^2
 =\underbrace{\|g(E_t)-\bar Y_t\|_2^2}_{\text{learnable approximation}}
 +\underbrace{\frac1{|\mathcal R|}\sum_{\ell\in\mathcal R}\|Y_{\ell,t}-\bar Y_t\|_2^2}_{\text{unavoidable cross-layer variance}},\quad
 \bar Y_t=\frac1{|\mathcal R|}\sum_{\ell}Y_{\ell,t}.
-\]
+$$
 
 The second term is a **lower bound on direct layerwise feature matching error** for a single identical shared vector; it is **not** a lower bound on end-task perplexity. Large variance predicts difficulty for the feature warmup, *not necessarily* failure of the model after end-to-end adaptation. An independent future candidate could use per-reader transformations at read time, but adds parameters/compute and needs a new matched control.
 
-**Why this does not yet reproduce full CED:** GDN has a recurrent state \(S_{\ell,t}=U_{\ell}(S_{\ell,t-1},H_{\ell-1,t})\) plus convolution state. Sharing later GQA KV does **not** yield the missing late-GDN boundary states if earlier decoder history is skipped. B2 will only claim CED-style prefill savings if it actually reconstructs those states with measured accuracy and *net* compute savings.
+**Why this does not yet reproduce full CED:** GDN has a recurrent state $S_{\ell,t}=U_{\ell}(S_{\ell,t-1},H_{\ell-1,t})$ plus convolution state. Sharing later GQA KV does **not** yield the missing late-GDN boundary states if earlier decoder history is skipped. B2 will only claim CED-style prefill savings if it actually reconstructs those states with measured accuracy and *net* compute savings.
 
 ### Pre-registered predictions and falsifiers
 
@@ -53,7 +53,7 @@ The second term is a **lower bound on direct layerwise feature matching error** 
 | H3 (latency) | Fewer K/V bytes *may* improve decode or memory-limited throughput | Same-host paired timing shows no gain or a regression (cache claim may still hold) |
 | H4 (B2 only) | Reconstructed GDN states might permit decoder historical skip | Reconstruction + inference costs >= original prefill, or long-continuation quality collapses |
 
-**KV cost calculation (prediction only):** one BF16 GQA group uses \(2\times4\times256\times2=4096\) bytes/token. Original 16 groups: **65,536 bytes/token**. B1b: eight early groups + one late shared group = **36,864 bytes/token**, a **43.75% reduction of the GQA KV component**; at 32,768 tokens that is 2.0 GiB vs 1.125 GiB. This is **not** a 43.75% reduction in total VRAM, GDN state, or prefill FLOPs.
+**KV cost calculation (prediction only):** one BF16 GQA group uses $2\times4\times256\times2=4096$ bytes/token. Original 16 groups: **65,536 bytes/token**. B1b: eight early groups + one late shared group = **36,864 bytes/token**, a **43.75% reduction of the GQA KV component**; at 32,768 tokens that is 2.0 GiB vs 1.125 GiB. This is **not** a 43.75% reduction in total VRAM, GDN state, or prefill FLOPs.
 
 ## Experimental arms and implementation status
 
@@ -105,7 +105,7 @@ export VAL_JSONL="$PWD/artifacts/data/fineweb_pilot_v1/val.jsonl"
 
 ## Evaluation: exactly how claims will be measured
 
-**Primary quality:** token-weighted next-token held-out cross entropy in nats/token, \(\mathrm{CE}=-(1/N)\sum_{i=1}^{N}\log p(x_i\mid x_{<i})\); **PPL** \(=\exp(\mathrm{CE})\). Compare B1b with B0T on *identical tokenized positions* and report \(\Delta\mathrm{CE}=\mathrm{CE}_{B1b}-\mathrm{CE}_{B0T}\) plus relative change. The current 5% **relative CE increase** is an early warning threshold, not a confidence interval or proof of equivalence. Use document-level paired bootstrap intervals for the metric difference when the sample size is large enough, and independently report run-to-run seed variation.
+**Primary quality:** token-weighted next-token held-out cross entropy in nats/token, $\mathrm{CE}=-(1/N)\sum_{i=1}^{N}\log p(x_i\mid x_{<i})$; **PPL** $=\exp(\mathrm{CE})$. Compare B1b with B0T on *identical tokenized positions* and report $\Delta\mathrm{CE}=\mathrm{CE}_{B1b}-\mathrm{CE}_{B0T}$ plus relative change. The current 5% **relative CE increase** is an early warning threshold, not a confidence interval or proof of equivalence. Use document-level paired bootstrap intervals for the metric difference when the sample size is large enough, and independently report run-to-run seed variation.
 
 **Current executable local evaluation:** `scripts/eval_nll.py` computes token-weighted CE/PPL for a fixed JSONL slice with separately reset, truncated documents; it records the input file hash, exact tokenizer/model revision, number of predicted tokens, and limitations. Evaluate B0/B1b sequentially on one GPU. This is a **bounded-document CE diagnostic**, not native LongBench/RULER/WikiText scoring.
 
