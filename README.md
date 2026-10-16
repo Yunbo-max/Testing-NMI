@@ -16,29 +16,36 @@ The DeepSeek report combines **CED** (separate production of decoder global memo
 
 Let $H_{\ell,t}$ be the representation of token $t$ after layer $\ell$. For every original late GQA reader $\ell\in\mathcal R=\{36,40,44,48,52,56,60,64\}$, the ordinary cache contains layer-dependent values (schematically):
 
-$$
-K_{\ell,t}=\operatorname{RoPE}\!\left(\operatorname{KNorm}_{\ell}(W^K_{\ell}\operatorname{LN}_{\ell}(H_{\ell-1,t}))\right),\qquad
-V_{\ell,t}=W^V_{\ell}\operatorname{LN}_{\ell}(H_{\ell-1,t}).
-$$
+$
+X_{\ell,t}=\mathrm{RMSNorm}_{\ell}(H_{\ell-1,t}),\qquad
+K_{\ell,t}=\mathrm{RoPE}\left(\mathrm{KNorm}_{\ell}(W^K_{\ell}X_{\ell,t})\right),\qquad
+V_{\ell,t}=W^V_{\ell}X_{\ell,t}.
+$
 
 **B1b hypothesis:** replace those eight persistent late K/V caches by one trainable projection of the encoder boundary $E_t=H_{32,t}$:
 
-$$
-\tilde K_t=\operatorname{RoPE}\!\left(\operatorname{KNorm}_{\phi}(W^K_{\phi}E_t)\right),\qquad
-\tilde V_t=W^V_{\phi}E_t,\qquad
-M_t=M_{t-1}\mathbin{\|}(\tilde K_t,\tilde V_t).
-$$
+$
+\tilde K_t=\mathrm{RoPE}\left(\mathrm{KNorm}_{\phi}(W^K_{\phi}E_t)\right),\qquad
+\tilde V_t=W^V_{\phi}E_t.
+$
 
-Here $\|$ is **append along time**, not a fixed-size linear-attention recurrent update and not aggregation of all 32 encoder-layer KV caches. Each late reader keeps its own $Q_{\ell,t}$, attention weights, output gate and FFN while reading the shared $M_t$. GDN recurrent/conv states remain per-layer.
+$
+M_t=\bigl[M_{t-1};\,(\tilde K_t,\tilde V_t)\bigr].
+$
+
+The semicolon in the definition of $M_t$ means **append a record along the time axis**; it is not a fixed-size linear-attention update and does not concatenate all 32 Encoder-layer KV caches. Each late reader keeps its own $Q_{\ell,t}$, attention weights, output gate and FFN while reading the shared $M_t$. GDN recurrent/conv states remain per-layer.
 
 **What can be lost?** Prior to training, extract the eight original **pre-RoPE** (K-normalized) K/V teacher targets $Y_{\ell,t}$ at the same token positions. Any single shared predictor $g(E_t)$ has the exact per-sample identity:
 
-$$
-\frac1{|\mathcal R|}\sum_{\ell\in\mathcal R}\|g(E_t)-Y_{\ell,t}\|_2^2
-=\underbrace{\|g(E_t)-\bar Y_t\|_2^2}_{\text{learnable approximation}}
-+\underbrace{\frac1{|\mathcal R|}\sum_{\ell\in\mathcal R}\|Y_{\ell,t}-\bar Y_t\|_2^2}_{\text{unavoidable cross-layer variance}},\quad
-\bar Y_t=\frac1{|\mathcal R|}\sum_{\ell}Y_{\ell,t}.
-$$
+$
+\frac{1}{|\mathcal R|}\sum_{\ell\in\mathcal R}\left\|g(E_t)-Y_{\ell,t}\right\|_2^2
+=
+\left\|g(E_t)-\bar Y_t\right\|_2^2
++
+\frac{1}{|\mathcal R|}\sum_{\ell\in\mathcal R}\left\|Y_{\ell,t}-\bar Y_t\right\|_2^2,
+\qquad
+\bar Y_t=\frac{1}{|\mathcal R|}\sum_{\ell\in\mathcal R}Y_{\ell,t}.
+$
 
 The second term is a **lower bound on direct layerwise feature matching error** for a single identical shared vector; it is **not** a lower bound on end-task perplexity. Large variance predicts difficulty for the feature warmup, *not necessarily* failure of the model after end-to-end adaptation. An independent future candidate could use per-reader transformations at read time, but adds parameters/compute and needs a new matched control.
 
@@ -54,6 +61,32 @@ The second term is a **lower bound on direct layerwise feature matching error** 
 | H4 (B2 only) | Reconstructed GDN states might permit decoder historical skip | Reconstruction + inference costs >= original prefill, or long-continuation quality collapses |
 
 **KV cost calculation (prediction only):** one BF16 GQA group uses $2\times4\times256\times2=4096$ bytes/token. Original 16 groups: **65,536 bytes/token**. B1b: eight early groups + one late shared group = **36,864 bytes/token**, a **43.75% reduction of the GQA KV component**; at 32,768 tokens that is 2.0 GiB vs 1.125 GiB. This is **not** a 43.75% reduction in total VRAM, GDN state, or prefill FLOPs.
+
+## Does B1b actually run on Qwen3.8-27B?
+
+**Designed for the official checkpoint, but full 27B execution is not yet verified.** The current code passed small PyTorch/mock-Qwen tests, not the actual 27.8B model on H100. Read the [native compatibility audit](docs/QWEN38_NATIVE_COMPATIBILITY.md) before treating it as production compatible.
+
+- **Do not delete any of the 64 Transformer blocks or any of the 48 Gated DeltaNet (GDN) layers.** The 24 decoder-side GDN layers still need their recurrent and convolution states computed over the prompt in B1b.
+- **Only reroute the K/V branch of the eight late GQA layers (36, 40, 44, 48, 52, 56, 60, 64).** Their native Q projections, per-head normalization, query/output gates, output projections, feed-forward layers and residuals remain. Keys are partially RoPE-rotated; values are not.
+- **No pretrained K/V weight tensors have been deleted.** The wrapper still holds the original late Attention modules for reversible checkpoint-compatible testing. It stops *executing* their native late K/V projections and *persisting* eight separate late K/V histories, but does **not** yet save backbone weight VRAM.
+- **Compatibility risks** to test on the actual HF implementation: text-only MRoPE/position offsets, DynamicCache layout, causal masking, Qwen GDN recurrent states, BF16/FP32 projector dtype, full-prefix vs incremental equivalence, and 80GB gradient-memory headroom. Unsupported paths include StaticCache, beam/cache reorder, distributed sharding, torch.compile, and general packed/multimodal masks.
+- **Quality is not preserved automatically.** The eight original deep-layer K/V representations differ; one projection from H32 is a newly trained approximation. A short projector/CE adapter warmup is a *pilot*, not a full convergence or capability claim.
+- **No CED prefill speedup is claimed in B1b.** All 64 blocks still process the prompt; B2 needs an independently verified, sufficiently cheap GDN state reconstructor.
+
+### Actual H100 compatibility gates (run before extended training)
+
+~~~bash
+python scripts/model_probe.py --out results/model_probe.json
+export MODEL_REVISION=$(python -c 'import json;print(json.load(open("results/model_probe.json"))["revision"])')
+python scripts/h100_preflight.py --out results/preflight_h100.json
+python -m pytest -q tests
+python scripts/benchmark.py --arm base --revision "$MODEL_REVISION" --prompt-file data/benchmark_prompt.txt --max-context 128 --decode-steps 8 --out results/runs/B0_native_smoke.json
+# For the shared arm, first create a bridge checkpoint using the documented
+# feature-extraction + projector-warmup commands; then:
+python scripts/benchmark.py --arm shared --revision "$MODEL_REVISION" --adapter artifacts/warmup/adapter.pt --prompt-file data/benchmark_prompt.txt --max-context 128 --decode-steps 8 --out results/runs/B1_native_smoke.json
+~~~
+
+The benchmark script checks 16 vs 9 physically populated GQA KV groups. A successful forward/cache check does **not** verify backward, sustained H100 training, quality, multimodality, or serving-kernel performance.
 
 ## Experimental arms and implementation status
 

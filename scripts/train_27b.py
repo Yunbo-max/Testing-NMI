@@ -43,7 +43,7 @@ if a.warmup_checkpoint:
 assert all(not p.requires_grad for name,p in model.named_parameters() if not name.startswith('nmi_shared_kv_bridge.'))
 trainable=sum(p.numel() for p in bridge.parameters() if p.requires_grad)
 print(json.dumps({'event':'installed_b1','trainable_parameters':trainable,'total_model_layers':64,
- 'gqa_source_1based':33,'reader_layers_1based':[i+1 for i in spec.reader_indices],
+ 'encoder_boundary_layer_1based':32,'physical_kv_producer_layer_1based':36,'reader_layers_1based':[i+1 for i in spec.reader_indices],
  'claim_scope':'cross_layer_KV_sharing_only'}),flush=True)
 tokenizer=AutoTokenizer.from_pretrained(a.model,revision=a.revision,trust_remote_code=False)
 
