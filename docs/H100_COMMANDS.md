@@ -44,7 +44,7 @@ python scripts/benchmark.py --arm base --revision "$MODEL_REVISION" --prompt-fil
 python scripts/extract_teacher_features.py --revision "$MODEL_REVISION" --data "$TRAIN_JSONL" \
   --seq-len 128 --max-examples 16 --out artifacts/teacher_features
 python scripts/train_feature_projector.py --features artifacts/teacher_features \
-  --out artifacts/warmup --steps 100 --batch-positions 64
+  --init source36 --out artifacts/warmup --steps 100 --batch-positions 64
 ```
 
 ## Step 3. B1b true 27B optimization
@@ -52,11 +52,26 @@ python scripts/train_feature_projector.py --features artifacts/teacher_features 
 ```bash
 python scripts/train_27b.py --revision "$MODEL_REVISION" \
   --train-data "$TRAIN_JSONL" --val-data "$VAL_JSONL" \
-  --warmup-checkpoint artifacts/warmup/adapter.pt \
+  --projector-init source36 --warmup-checkpoint artifacts/warmup/adapter.pt \
   --seq-len 128 --steps 16 --lr 2e-5 --out artifacts/train_b1
 ```
 
 Train only the new FP32-master shared-KV projector; base remains BF16 and frozen, no large teacher loaded simultaneously. If actual peak VRAM exceeds budget, stop and record OOM/fallback; do not silently enable CPU offload/quantization and compare against an unmatched baseline. Gradient checkpointing is **not qualified** for the boundary hook path in this version.
+
+## Optional initialization ablation (additional GPU budget)
+
+Current default: **pretrained Qwen backbone frozen**, bridge K/V initialized from original **layer 36**, then feature warmup and CE. Compare to **randomly initialized bridge K/V matrices**, retaining the same pretrained KNorm and Qwen base; never confuse this control with B0T (a matched trained unmodified-Qwen adapter, still unimplemented).
+
+~~~bash
+python scripts/train_feature_projector.py --features artifacts/teacher_features \
+  --init random_linear --out artifacts/warmup_random --steps 100 --batch-positions 64
+python scripts/train_27b.py --revision "$MODEL_REVISION" \
+  --train-data "$TRAIN_JSONL" --val-data "$VAL_JSONL" \
+  --projector-init random_linear --warmup-checkpoint artifacts/warmup_random/adapter.pt \
+  --seq-len 128 --steps 16 --lr 2e-5 --out artifacts/train_b1_random
+~~~
+
+Match data, tokenizer/model revision, seed, steps and trainable parameters; include both feature warmup and training compute. The code must verify checkpoint initialization metadata; legacy checkpoints are not evidence for the random control. See [WEIGHTS_AND_INITIALIZATION.md](WEIGHTS_AND_INITIALIZATION.md).
 
 ## Step 4. Benchmark the same frozen prompt
 
