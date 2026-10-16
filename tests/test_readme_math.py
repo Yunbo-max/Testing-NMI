@@ -8,7 +8,7 @@ def test_readme_math_uses_supported_macros():
     assert r"\mathrm{RoPE}" in readme
     assert r"\mathrm{RMSNorm}" in readme
     assert r"\mathbin{\|}" not in readme
-    assert readme.count("$$") % 2 == 0
+    assert readme.count("$" + "$") == 8
 
 
 def test_compatibility_stated_as_unverified():

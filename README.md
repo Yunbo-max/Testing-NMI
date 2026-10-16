@@ -16,28 +16,28 @@ The DeepSeek report combines **CED** (separate production of decoder global memo
 
 Let $H_{\ell,t}$ be the representation of token $t$ after layer $\ell$. For every original late GQA reader $\ell\in\mathcal R=\{36,40,44,48,52,56,60,64\}$, the ordinary cache contains layer-dependent values (schematically):
 
-$
+$$
 X_{\ell,t}=\mathrm{RMSNorm}_{\ell}(H_{\ell-1,t}),\qquad
 K_{\ell,t}=\mathrm{RoPE}\left(\mathrm{KNorm}_{\ell}(W^K_{\ell}X_{\ell,t})\right),\qquad
 V_{\ell,t}=W^V_{\ell}X_{\ell,t}.
-$
+$$
 
 **B1b hypothesis:** replace those eight persistent late K/V caches by one trainable projection of the encoder boundary $E_t=H_{32,t}$:
 
-$
+$$
 \tilde K_t=\mathrm{RoPE}\left(\mathrm{KNorm}_{\phi}(W^K_{\phi}E_t)\right),\qquad
 \tilde V_t=W^V_{\phi}E_t.
-$
+$$
 
-$
+$$
 M_t=\bigl[M_{t-1};\,(\tilde K_t,\tilde V_t)\bigr].
-$
+$$
 
 The semicolon in the definition of $M_t$ means **append a record along the time axis**; it is not a fixed-size linear-attention update and does not concatenate all 32 Encoder-layer KV caches. Each late reader keeps its own $Q_{\ell,t}$, attention weights, output gate and FFN while reading the shared $M_t$. GDN recurrent/conv states remain per-layer.
 
 **What can be lost?** Prior to training, extract the eight original **pre-RoPE** (K-normalized) K/V teacher targets $Y_{\ell,t}$ at the same token positions. Any single shared predictor $g(E_t)$ has the exact per-sample identity:
 
-$
+$$
 \frac{1}{|\mathcal R|}\sum_{\ell\in\mathcal R}\left\|g(E_t)-Y_{\ell,t}\right\|_2^2
 =
 \left\|g(E_t)-\bar Y_t\right\|_2^2
@@ -45,7 +45,7 @@ $
 \frac{1}{|\mathcal R|}\sum_{\ell\in\mathcal R}\left\|Y_{\ell,t}-\bar Y_t\right\|_2^2,
 \qquad
 \bar Y_t=\frac{1}{|\mathcal R|}\sum_{\ell\in\mathcal R}Y_{\ell,t}.
-$
+$$
 
 The second term is a **lower bound on direct layerwise feature matching error** for a single identical shared vector; it is **not** a lower bound on end-task perplexity. Large variance predicts difficulty for the feature warmup, *not necessarily* failure of the model after end-to-end adaptation. An independent future candidate could use per-reader transformations at read time, but adds parameters/compute and needs a new matched control.
 
