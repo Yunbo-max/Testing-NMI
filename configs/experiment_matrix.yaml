@@ -49,3 +49,42 @@ quality_guardrails:
   zero_future_leakage_required: true
   incremental_vs_full_parity_required: true
   physical_kv_reuse_required: true
+
+dataset_protocol:
+  status: specified_not_yet_downloaded_on_H100
+  primary_id: HuggingFaceFW/fineweb-edu
+  primary_config: sample-10BT
+  primary_upstream_split: train
+  primary_revision: PIN_AT_EXECUTION
+  prep_command: scripts/prepare_fineweb.py
+  out_dir: artifacts/data/fineweb_pilot_v1
+  prepared_token_quotas: {train: 120000, val: 20000, test: 20000}
+  split: "SHA256(exact_normalized_text) first 48 bits modulo 10: 0..7=train, 8=val, 9=test"
+  shuffle_seed: 1337
+  shuffle_buffer: 10000
+  min_document_tokens: 16
+  max_document_tokens: 128
+  reported_actual_train_tokens_from: artifacts/train_b1/metrics.jsonl
+  internal_test_use: frozen_post_selection_only
+  independent_lm_id: Salesforce/wikitext
+  independent_lm_config: wikitext-103-raw-v1
+  independent_lm_splits: [validation, test]
+  leakage_note: "within-source splits only; Qwen base-pretraining contamination is unknown"
+evaluation_protocol:
+  primary_metric: bounded_document_token_weighted_ce
+  ppl_formula: "exp(token_weighted_cross_entropy_nats)"
+  primary_evaluator: scripts/eval_nll.py
+  primary_evaluator_status: implemented_not_H100_verified
+  compare_base_to_shared_status: diagnostic_only_without_matched_B0T
+  b0t_matched_control_status: planned_not_implemented
+  stats: "paired document uncertainty and training seed variation after enough real runs"
+  native_ruler: planned_not_implemented
+  native_longbench_v2: planned_not_implemented
+  native_humaneval: planned_not_implemented
+  native_gsm8k: planned_not_implemented
+  wiki_full_corpus_ppl: planned_not_implemented
+  performance: "prefill forward time, decode tok/s, physical GQA KV bytes, separate GDN states and peak VRAM"
+  benchmark_script_status: "single_run_diagnostic_only; paired warm repeated evaluator pending"
+  contexts: [1024, 4096, 8192, 16384, 32768]
+  seed: 1337
+  disclaimer: "No official benchmark or 27B metric was measured by this config publication"
