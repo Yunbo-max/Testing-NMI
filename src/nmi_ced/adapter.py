@@ -167,13 +167,15 @@ def install_qwen_shared_kv(model, *, initialize_from_teacher=True, spec:AdapterS
     return bridge,spec,hook
 
 
-def save_bridge(bridge:SharedKVBridge, path, *, model_id, model_revision, spec:AdapterSpec|None=None):
+def save_bridge(bridge:SharedKVBridge, path, *, model_id, model_revision, spec:AdapterSpec|None=None,
+                initialization=None, training_stage=None):
     """Save only trainable adapter tensors; never save giant base weights to GitHub."""
     spec=spec or AdapterSpec()
     target=Path(path);target.parent.mkdir(parents=True,exist_ok=True)
     torch.save({"format":"qwen38_shared_kv_b1_v0", "model_id":model_id,"revision":model_revision,
                 "boundary_idx":spec.boundary_idx,"producer_idx":spec.producer_idx,
-                "reader_indices":list(spec.reader_indices),"state_dict":bridge.state_dict()},target)
+                "reader_indices":list(spec.reader_indices),"initialization":initialization,
+                "training_stage":training_stage,"state_dict":bridge.state_dict()},target)
 
 
 def load_bridge_checkpoint(bridge, path, *, expected_revision=None):
