@@ -20,8 +20,19 @@ H3 (B2 only): A causal state reconstructor can reduce full-prompt decoder work w
 
 If matched LoRA control cannot have exactly the same number of trainable parameters, report counts and build two controls: (a) same trainable modules except changed memory semantics; (b) closest trainable parameter budget. Don't call weak controls fair.
 
-## Training data and splits
-Pin tokenizer/packing, shuffle seed, data revisions/licenses. Initial 100k-token smoke from a clean permissive mixture: approximately 50% general prose, 25% code, 25% reasoning/math or long documents; labels are next token (causal CE). The proportions are an experimental proposal; if actual sources are unavailable, record substitutions instead of claiming these were used. Reserve group-disjoint documents for dev and held-out, no leakage. For meaningful results use substantially more data and equal token exposure/optimizer budgets across B0T/B1, recording measured throughput. Keep all reports for negative runs.
+## Training data and splits — frozen pilot v1
+
+**Chosen actual source:** HuggingFaceFW/fineweb-edu, config sample-10BT, streaming source split train. Download from https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu. The public source is licensed ODC-BY; preserve attribution. This replaces the former *proposed but unspecified* 50/25/25 mixture. The first experiment intentionally isolates the shared-KV treatment using **one** adaptation domain. Extra code/math training mixtures, if ever used, must be a new preregistered version and identical across all arms.
+
+On the authorized host use **scripts/prepare_fineweb.py** (documented in README and docs/H100_COMMANDS.md). It requires immutable dataset and Qwen/tokenizer SHAs; streams deterministic shuffled source documents (seed 1337, shuffle buffer 10000), exact-text-deduplicates, assigns SHA256-document-hash buckets 0..7 to train / 8 to val / 9 to internal test, then records dataset ID, version, library versions, actual bounded input-token counts, per-split doc counts and file SHA256 in a JSON manifest. The splits are **constructed inside the upstream training corpus**; they are not original source validation/test and do not guarantee no contamination of Qwen's own pretraining.
+
+**Stage 0 fixed preparation quotas:** 120,000 bounded train tokens, 20,000 internal validation tokens, 20,000 internal test tokens, seq 128, at least 16 tokens/document. Do not treat prepared tokens as actual training exposure: current scripts/train_27b.py cycles records without packing and normally runs just 16 gradient updates at microbatch 1 × grad accumulation 1, so it sees no more than approximately 2,048 input tokens in the H100 smoke. Read actual tokens_seen, counted repetitions, optimizer steps, dataset manifest, and final checkpoint rather than inferring exposure from data file size.
+
+**Matched adaptation (after GPU smoke):** budget 100k actual training tokens, then 200k actual training tokens, identical document IDs/order/seq length and permitted tuning for B0T and B1b; account separately for B1 feature distillation/warmup, optimizer compute and GPUs hours. Longer 1–2M-token comparisons and extra seeds require feasibility measurements and separate human acceptance of resource expansion. Do not select the method by looking at the untouched internal test.
+
+**Independent public LM data:** Salesforce/wikitext configuration wikitext-103-raw-v1 original validation / frozen test, https://huggingface.co/datasets/Salesforce/wikitext. Use it for cross-domain diagnostic and an eventual official scorer. The provided scripts/eval_nll.py uses independently reset/truncated JSONL documents, so report **bounded_document_token_weighted_ce**, never present that output as standard full-corpus WikiText-103 PPL.
+
+**Public evaluation-only benchmarks:** NVIDIA/RULER at 4k/8k/16k/32k, THUDM/LongBench-v2 (503 multiple-choice tasks, separately labelled feasible subset if necessary), openai/human-eval (164 problems, isolated execution), openai/gsm8k (test final-answer exact match). The repository does **not yet** include their official evaluator integrations or results. Pin native data/scorer revisions, prompt format, context budget, thinking mode and decoding parameters before scoring. Truncated LongBench-v2 items must be marked altered, not official results.
 
 ## Diagnostic tests (not public benchmark claims)
 - 8, 128, 1k, 8k, 32k-token forward and incremental cache; EOS/padding; batch=1 then 2.
@@ -37,6 +48,14 @@ Pin tokenizer/packing, shuffle seed, data revisions/licenses. Initial 100k-token
 - Memory: peak HBM VRAM `torch.cuda.max_memory_allocated`, NVML allocated memory, unique K/V allocation bytes, GDN state, allocator cache, CPU/SSD persistent bytes.
 - Speed: TTFT/prefill throughput, decode tokens/s, index overhead separately. At lengths 1k→256, 8k→256, 32k→512, and 64k→512 if feasible. Warm 3, record >=10 paired repeats, vary order. Same compiled kernel, batch, GPU and precision.
 - Always include total token throughput, time-to-quality and peak memory **at matched quality**. A speedup while quality collapses is not a success.
+
+## Evaluation formula and executable vs planned scorers
+
+Primary paired comparison uses held-out token-weighted CE = -sum(log p(next token)) / number of predicted tokens, with PPL = exp(CE). Report absolute delta CE(B1b-B0T) and relative delta CE/CE(B0T), with per-document paired uncertainty. The predeclared +5% relative CE screen is an engineering warning, **not** an equivalence margin proven by statistics. An untrained B0 vs trained B1b comparison cannot isolate architecture quality. Use multiple training seeds when resource budget permits.
+
+**Implemented now:** scripts/eval_nll.py computes bounded-document CE/PPL over the same hashed JSONL file for B0 and B1b, storing denominator, input-file hash and limits. scripts/benchmark.py measures one-run prefill forward time (not service TTFT), greedy decode rate, GQA cache bytes and peak VRAM. The code does not implement ≥10 paired warm repetitions, native RULER/LongBench, exact standard WikiText PPL, a B0T optimizer, or HumanEval/GSM8K scoring yet. These remain explicit experiment obligations, not successful results.
+
+**Qualified future scorers:** RULER task-level exact-match / aggregate per length; LongBench-v2 letter-choice exact accuracy by difficulty/domain and full-vs-subset disclosure; HumanEval pass@1 with official sandboxed tests; GSM8K final numeric answer exact match; plus long-form output consistency as a separate diagnostic. Operational acceptance also requires physical unique KV allocations and unchanged late-GDN recurrence, and net end-to-end latency at **matched quality**. Store full raw outputs and scorer revisions and use held-out labels only for frozen confirmation.
 
 ## Exact reporting
 Every row contains: run ID, treatment, git commit, model revision, environment, hardware memory/driver, input-token distribution, optimizer, max sequence length, trainable param count, tokens seen, wall-clock / GPU-hours, loss/logits metrics, cache bytes, TTFT, decode speed, seed, complete command and exit status, raw stdout/stderr location, checker/reviewer receipt.
