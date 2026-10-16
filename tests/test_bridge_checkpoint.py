@@ -13,8 +13,11 @@ def test_projector_checkpoint_roundtrip(tmp_path):
     torch.manual_seed(11)
     a=SharedKVBridge(16,2,8,Norm())
     target=tmp_path/'proj.pt'
-    save_bridge(a,target,model_id='test/mock',model_revision='a'*40)
+    save_bridge(a,target,model_id='test/mock',model_revision='a'*40,
+                initialization='source36',training_stage='feature_projector_warmup')
     b=SharedKVBridge(16,2,8,Norm())
-    load_bridge_checkpoint(b,target,expected_revision='a'*40)
+    meta=load_bridge_checkpoint(b,target,expected_revision='a'*40)
+    assert meta['initialization']=='source36'
+    assert meta['training_stage']=='feature_projector_warmup'
     for k,v in a.state_dict().items():torch.testing.assert_close(v,b.state_dict()[k])
     with pytest.raises(ValueError):load_bridge_checkpoint(b,target,expected_revision='b'*40)
