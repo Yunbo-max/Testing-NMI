@@ -1,0 +1,27 @@
+{
+  "date_utc": "2026-10-16",
+  "status": "observed_cpu_only",
+  "source_basis": "Prior verified Testing-NMI source snapshot, with exact new scripts/test byte-matched to GitHub blob IDs; docs changes do not execute in the CPU tests.",
+  "commands": [
+    "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/mnt/data/testing_nmi_validation/src python -m pytest -q /mnt/data/testing_nmi_validation/tests",
+    "git hash-object scripts/prepare_fineweb.py; git hash-object scripts/eval_nll.py; git hash-object tests/test_data_and_nll.py"
+  ],
+  "observed": {
+    "exit_code": 0,
+    "tests_passed": 15,
+    "tests_failed": 0,
+    "duration_seconds_reported_by_pytest": 1.28
+  },
+  "source_git_blob_sha1": {
+    "scripts/prepare_fineweb.py": "653bcd26627336bf6c14e2583b7fef71af29efc9",
+    "scripts/eval_nll.py": "0296dfbb2e8551b23d5c764a7821f7c875c9685e",
+    "tests/test_data_and_nll.py": "35837ea691b031a5a5cb948a470752a9ae583ae2"
+  },
+  "limitations": [
+    "No official Qwen3.8-27B weights loaded",
+    "No H100 connected or tested",
+    "No real training data downloaded",
+    "No B0T or official benchmark scorer implemented",
+    "Existing original 12 tests and 3 new tests passed on CPU only"
+  ]
+}
