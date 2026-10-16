@@ -1,33 +1,49 @@
-# H100 training recipe after 48-hour architecture gates
+# Qwen3.8-27B pretrained-weight adaptation on H100
 
-**Why not full finetune?** 27.8B BF16 checkpoint weights alone are ~55.6 billion bytes (~51.8 GiB) and full AdamW training of all weights exceeds one H100 80GB once gradients and optimizer moments are included. Begin with **BF16 frozen backbone + trainable projector / small LoRA**. Unsloth documents ~56GB BF16-LoRA for Qwen3.5-27B; that is framework-specific and **not** evidence our patched Qwen3.8 model will fit. Start max sequence length 512, microbatch 1, gradient accumulation 8, BF16, checkpointing, then increase to 1k/2k only after measured headroom. Avoid 4-bit QLoRA as the unmeasured default; current Unsloth Qwen3.5 guide specifically cautions about larger-than-normal quantization differences.
+**Chosen route: transfer the official pretrained Qwen3.8-27B weights, not a fresh 27B pretraining run.** Preserve all 64 layers (including 48 GDN blocks), original Q, gates, O, FFN and LM head. First train only a shared bridge from the output H32. Full CED prefill skipping/CSA2 sparse kernels, KL distillation, Q/O LoRA, and trained B0T remain **not implemented**.
 
-## Stage 0 — model baseline (requires actual H100)
-Freeze exact model and tokenizer revisions. Obtain unmodified baseline for held-out CE (same tokenizer), TTFT, decode, physical cache and generated examples. Disable MTP/speculative decode, avoid quantization, use same attention backend. Use model in text-only mode for primary comparisons; multimodal retention is later work.
+## Hardware assumptions and truthful status
 
-## Stage 1 — feature matching / projector warmup
-- Teacher: unmodified Qwen3.8-27B `eval()`, `torch.no_grad()`; Student: the *same frozen base weights* + newly initialized H32-to-global-KV projector. Do not keep two 27B copies resident on one GPU.
-- Capture causal H32 for token positions plus pre-RoPE original K/V from GQA layers 36,40,44,48,52,56,60,64, with verified tensor shapes and positional conventions; extraction run stored in chunks on CPU/NVMe, teacher eval disabled afterwards.
-- Minimize normalized teacher feature MSE, optionally matching selected downstream attention output. This is an **initialization auxiliary objective**; it is not sufficient to recover next-token quality. Initial features are incompatible across layers; value of this warmup is empirical.
-- Initial training hyperparams: `bf16`, AdamW, lr `1e-4` for new projector, weight decay `0.01`, warmup 20, grad_clip `1.0`, microbatch 1, accumulation 8, seq 512, 50 smoke steps (suggestions; tune based on loss/throughput), seed 1337. Run ten-step tiny overfit first and verify loss decreases/gradients finite.
+27.8B BF16 weights alone are approximately 51.8 GiB. The frozen main model still needs backward **activations** for gradients to flow into the new bridge through later layers; one H100 80GB is not guaranteed to fit. Start with seq=128, batch=1, no unqualified gradient checkpointing, and measure actual peak VRAM before expansion. No actual 27B GPU training has been verified by editing this repository.
 
-## Stage 2 — language objective and teacher distillation
-Train new projector and an **explicit** optional LoRA set for affected decoder GQA Q/O (e.g. r=8 then 16, alpha=16). Frozen early encoder and all GDN parameters for initial pilot. Do not modify arbitrary FFNs until ablation isolates need.
+## Stage 0 — pretrained teacher + B0 baseline (implemented commands; H100 pending)
 
-`L = CE(next_token_logits, labels) + 0.3 * T^2 * KL(teacher_logits/T || student_logits/T) + 0.1 * L_attn` with T=2 as a **pilot**. The weighting and optimizer are hypotheses, not published DeepSeek settings.
+Pin the Qwen HF SHA and exact Transformers, tokenizer and dataset revisions. The unmodified pretrained Qwen (eval/no_grad) supplies H32 and eight original post-KNorm, pre-RoPE K/V targets. Native original layer 36 (one-based) supplies the bridge's starting K/V and KNorm weights. Teacher feature shards are written to local \`artifacts/\` and should never be committed as model weights.
 
-For one H100, run teacher `no_grad` and student+backprop sequentially using one physical backbone with attention modes toggled; store teacher logits for the batch temporarily (or stream/checkpoint them), never copy weights to create two simultaneous 27B models. Full-vocabulary teacher logits for batch=1, seq=512, vocab≈248k: ≈254MB BF16, ~508MB FP32; observe actual overhead. If this path still OOMs, cache bounded teacher top-k distributions on NVMe and explicitly label approximate KL (do not call top-k matching exact KL); use CE-only ablation.
+## Stage 1 — offline feature warmup (implemented)
 
-Initial pilot training data **after H48:** 50k–200k tokens, seq 512→1024→2048 if possible, no declared time-to-completion until measuring actual tokens/s; compare against B0T under identical tokens and optimization steps. Do NOT promise this converges 27B CED. Resume from observed step+optimizer checkpoint, save every 100 steps or 30 minutes of real compute (not both blindly), keep one recent rollback + best held-out.
+From original layer 36, copy K/V projection weights and KNorm into the new bridge (default \`--init source36\`). For the diagnostic \`--init random_linear\`, initialize **only K/V projection matrices** randomly; KNorm remains copied from layer 36. The optimizer learns a common bridge representation matched against original per-layer K/V targets using normalized MSE. It is not a guarantee of lower next-token loss. Current defaults: AdamW, lr=2e-4, weight decay=0, 100 iterations, 64 feature positions, seed 17. Original 27B weights need not reside on the GPU during this offline warmup.
 
-## Full-project extensions
-- B1a shared pair (25% cache saving) and B1b late-eight all-shared (43.75%), same token budget, to map quality–cache frontier.
-- B1q original per-layer KV quantization baseline if a compatible inference kernel is available.
-- Add sparse top-k separate arm only after B1 shares are physically real; isolate index selection vs attention compute.
-- B2: causal GDN state reconstruction from H32 sequence, initialized on tiny hybrid first. Performance metric must include reconstructor FLOPs and memory in prefill. This may be infeasible in the target hardware/accuracy budget.
+## Stage 2 — frozen-base causal CE adaptation (implemented entrypoint; H100 pending)
 
-## Resource and evidence control
-`nvidia-smi` + `torch.cuda.max_memory_allocated` before every material allocation change. Default batch 1; abort on repeated OOM, revert length/precision and record; never silently continue with changed settings. Keep raw logs and actual checkpoint SHA256. GPU host has to be explicitly available to the run agent; a planning package is not a process launch.
+Reload **the same pinned pretrained** Qwen checkpoint, freeze all backbone weights (\`model.requires_grad_(False)\`), install one bridge, load the Stage-1 checkpoint, optimize bridge with token-level next-token CE. Defaults for first H100 gate: 16 optimizer steps, seq=128, microbatch=1, accumulation=1, AdamW lr=2e-5, weight decay=.01, grad clip 1.0. Record nonzero finite bridge gradients, optimizer updates, actual tokens seen, peak memory, output checkpoint and held-out CE. The first 16 steps are a smoke test, **not** 100k-token adaptation.
 
-## Explicit separation of reproducibility states
-`authored` (code exists), `unit_passed` (tiny tests), `27b_baseline_passed`, `27b_adapter_passed`, `train_step_passed`, `training_running`, `heldout_evidence`, `claim_supported` (separately confirmed). Do not skip states or infer later statuses from file existence.
+~~~bash
+python scripts/extract_teacher_features.py --revision "$MODEL_REVISION" --data "$TRAIN_JSONL" \
+  --seq-len 128 --max-examples 16 --out artifacts/teacher_features
+python scripts/train_feature_projector.py --features artifacts/teacher_features \
+  --init source36 --out artifacts/warmup --steps 100 --batch-positions 64
+python scripts/train_27b.py --revision "$MODEL_REVISION" \
+  --train-data "$TRAIN_JSONL" --val-data "$VAL_JSONL" \
+  --projector-init source36 --warmup-checkpoint artifacts/warmup/adapter.pt \
+  --seq-len 128 --steps 16 --lr 2e-5 --out artifacts/train_b1
+~~~
+
+The first commands require pinned model revision and distinct JSONL train/val prepared with [H100_COMMANDS.md](H100_COMMANDS.md). Training checkpoint metadata now records initialization policy and stage where available; old checkpoints missing provenance are **legacy/unknown**.
+
+## Stage 3 — optional logits teacher KL + late Q/O LoRA (NOT implemented)
+
+Only after Stage 2 quality checks, consider a separate experiment with teacher distillation and/or Q/O LoRA. A conceptual prospective loss is
+
+$$
+\mathcal L_{\mathrm{future}} =
+\mathcal L_{\mathrm{CE}}+\lambda T^2D_{\mathrm{KL}}(p_T^T\Vert p_S^T).
+$$
+
+Do **not** claim the current \`train_27b.py\` computes KL or updates LoRA: it computes CE only and trains bridge parameters.
+
+## Controls, research goals and failure handling
+
+B0 is original untrained pretrained Qwen for a fixed-quality anchor; **B0T matched training is not yet implemented**, but mandatory to identify architecture-specific effects. Compare \`source36\` versus \`random_linear\` initializations and feature warmup versus no warmup with exactly recorded datasets, random seeds, token exposures and full feature-extraction + GPU costs. Report unique KV bytes separately from full VRAM, GDN state size, TTFT and decode speed. This B1b path preserves all 64 blocks and does not reduce decoder GDN prefill FLOPs. Keep logs/checkpoints on the actual host; use GitHub only for reviewed source/evidence direct pull/push (no Actions).
+
+See [WEIGHTS_AND_INITIALIZATION.md](WEIGHTS_AND_INITIALIZATION.md), [EXPERIMENT_PROTOCOL.md](EXPERIMENT_PROTOCOL.md) and [QWEN38_NATIVE_COMPATIBILITY.md](QWEN38_NATIVE_COMPATIBILITY.md).
