@@ -14,16 +14,20 @@ python scripts/h100_preflight.py --out results/preflight_h100.json
 python scripts/model_probe.py --out results/model_probe.json
 ```
 
-Set **exact** `MODEL_REVISION` from `results/model_probe.json`; replace the placeholder rather than using literal `<...>`.
+Use the exact model commit from results/model_probe.json and pin the FineWeb-Edu revision independently. This prepares **private** immutable JSONL inputs and manifest; it does not download all 10B tokens locally.
 
 ```bash
-export MODEL_REVISION='INSERT_PINNED_HF_SHA'
-export TRAIN_JSONL='/private/data/train.jsonl'
-export VAL_JSONL='/private/data/val.jsonl'
-# Input schema per row: {"text": "long natural language training sample..."}
-# Keep actual raw datasets on your authorized host, NOT committed to GitHub.
+export MODEL_REVISION=$(python -c 'import json;print(json.load(open("results/model_probe.json"))["revision"])')
+export DATA_REVISION=$(python -c 'from huggingface_hub import HfApi;print(HfApi().dataset_info("HuggingFaceFW/fineweb-edu").sha)')
+python scripts/prepare_fineweb.py --model-revision "$MODEL_REVISION" --dataset-revision "$DATA_REVISION" \
+  --train-tokens 120000 --val-tokens 20000 --test-tokens 20000 \
+  --seq-len 128 --seed 1337 --out artifacts/data/fineweb_pilot_v1
+export TRAIN_JSONL="$PWD/artifacts/data/fineweb_pilot_v1/train.jsonl"
+export VAL_JSONL="$PWD/artifacts/data/fineweb_pilot_v1/val.jsonl"
 python scripts/kv_budget.py --context 32768
 ```
+
+The upstream FineWeb-Edu config is sample-10BT/train; our splits are document-hash-disjoint **within** that train source (80/10/10). The JSONL schema is {"text": "...", "source": "...", "sha256_text": "..."}. Output paths and dataset manifest are ignored by git. For custom preapproved training data, replace TRAIN_JSONL/VAL_JSONL only after equivalent split provenance and SHA256 are recorded. A prepared 120k-token train file does not mean the default 16-step trainer has consumed 120k tokens.
 
 ## Step 1. Real unmodified Qwen benchmark
 
@@ -66,6 +70,20 @@ python scripts/compare_benchmarks.py --base results/runs/B0-first.json \
 ```
 
 **Do not misinterpret B1 prefill metrics as DeepSeek CED:** all 64 blocks run. The new reference SDPA may even be slower. More repetitions and controlled paired accuracy tests are required before quantitative conclusions.
+
+## Step 5. Held-out CE/PPL diagnostic (implemented; not an official benchmark)
+
+After finishing the model baseline and B1b optimizer smoke, run the **same** internal validation JSONL and tokenization against the two arms; use a fixed revision and fixed sample count:
+
+```bash
+python scripts/eval_nll.py --arm base --revision "$MODEL_REVISION" \
+  --data "$VAL_JSONL" --seq-len 128 --max-examples 64 --out results/runs/B0_val_ce.json
+python scripts/eval_nll.py --arm shared --revision "$MODEL_REVISION" \
+  --adapter artifacts/train_b1/adapter-step-000016.pt \
+  --data "$VAL_JSONL" --seq-len 128 --max-examples 64 --out results/runs/B1b_val_ce.json
+```
+
+Metrics are token-weighted **per-document truncated** CE/PPL with the same data hash, not whole-corpus WikiText perplexity and not a controlled architecture quality contrast until trained B0T exists. Native RULER/LongBench-v2/HumanEval/GSM8K evaluators remain planned. See README.md and docs/EXPERIMENT_PROTOCOL.md.
 
 ## Host logs and evidence
 
