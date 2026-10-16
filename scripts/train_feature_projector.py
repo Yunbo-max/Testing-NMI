@@ -23,6 +23,8 @@ p.add_argument('--steps',type=int,default=100)
 p.add_argument('--batch-positions',type=int,default=64)
 p.add_argument('--lr',type=float,default=2e-4)
 p.add_argument('--seed',type=int,default=17)
+p.add_argument('--init',choices=['source36','random_linear'],default='source36',
+               help='source36 copies pretrained layer-36 K/V matrices; random_linear reinitializes only matrices; KNorm is pretrained in both')
 a=p.parse_args()
 torch.manual_seed(a.seed);random.seed(a.seed)
 root=Path(a.features)
@@ -36,8 +38,10 @@ assert x.ndim==2 and x.shape[-1]==5120
 assert y.shape==(x.shape[0],8,2048)
 init=torch.load(root/'initial_projection.pt',weights_only=True,map_location='cpu')
 bridge=SharedKVBridge(5120,4,256,Norm())
-bridge.k_proj.load_state_dict(init['k_proj'])
-bridge.v_proj.load_state_dict(init['v_proj'])
+if a.init=='source36':
+    bridge.k_proj.load_state_dict(init['k_proj'])
+    bridge.v_proj.load_state_dict(init['v_proj'])
+# Both arms start with the pretrained layer-36 KNorm.
 bridge.k_norm.load_state_dict(init['k_norm'])
 device='cuda' if torch.cuda.is_available() else 'cpu'
 bridge.to(device)
@@ -58,6 +62,8 @@ for step in range(a.steps):
     if step%10==0 or step==a.steps-1:print(json.dumps({'step':step,'loss':history[-1]}),flush=True)
 Path(a.out).mkdir(parents=True,exist_ok=True)
 save_bridge(bridge,Path(a.out)/'adapter.pt',
-            model_id=meta['model_id'],model_revision=meta['revision'])
+            model_id=meta['model_id'],model_revision=meta['revision'],
+            initialization=a.init,training_stage='feature_projector_warmup')
 (Path(a.out)/'metrics.json').write_text(json.dumps({'steps':a.steps,'positions':x.shape[0],
-  'loss_history':history,'status':'feature_projector_warmup_only'},indent=2))
+  'loss_history':history,'initialization':a.init,
+  'key_norm_origin':'pretrained_gqa_layer36','status':'feature_projector_warmup_only'},indent=2))
