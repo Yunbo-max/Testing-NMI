@@ -23,6 +23,8 @@ p.add_argument('--steps',type=int,default=16)
 p.add_argument('--grad-accum',type=int,default=1)
 p.add_argument('--lr',type=float,default=2e-5)
 p.add_argument('--seed',type=int,default=1701)
+p.add_argument('--projector-init',choices=['source36','random_linear'],default='source36',
+               help='projector K/V matrices from pretrained layer 36 or random; original KNorm is copied in both')
 p.add_argument('--save-every',type=int,default=8)
 p.add_argument('--eval-examples',type=int,default=4)
 a=p.parse_args()
@@ -36,14 +38,24 @@ model=load_qwen(model_id=a.model,revision=a.revision)
 model.requires_grad_(False)
 if getattr(model,'is_gradient_checkpointing',False):
     raise RuntimeError('B1 hook adapter v0 is not qualified for gradient checkpointing')
-bridge,spec,handle=install_qwen_shared_kv(model)
+bridge,spec,handle=install_qwen_shared_kv(model,initialize_from_teacher=(a.projector_init=='source36'))
+ckpt_init=None
 if a.warmup_checkpoint:
     info=load_bridge_checkpoint(bridge,a.warmup_checkpoint,expected_revision=a.revision)
     if info['model_id']!=a.model:raise ValueError('adapter base model mismatch')
+    ckpt_init=info.get('initialization')
+    if ckpt_init is not None and ckpt_init!=a.projector_init:
+        raise ValueError('warmup checkpoint initialization mismatches --projector-init')
+    if ckpt_init is None and a.projector_init=='random_linear':
+        raise ValueError('legacy checkpoint has unknown K/V weight origin; cannot use as random_linear control')
+effective_init=(a.projector_init if not a.warmup_checkpoint else
+                f'feature_warmup_from_{a.projector_init}' if ckpt_init is not None else
+                'feature_warmup_legacy_unknown_source')
 assert all(not p.requires_grad for name,p in model.named_parameters() if not name.startswith('nmi_shared_kv_bridge.'))
 trainable=sum(p.numel() for p in bridge.parameters() if p.requires_grad)
 print(json.dumps({'event':'installed_b1','trainable_parameters':trainable,'total_model_layers':64,
  'encoder_boundary_layer_1based':32,'physical_kv_producer_layer_1based':36,'reader_layers_1based':[i+1 for i in spec.reader_indices],
+ 'projector_initialization':effective_init,'pretrained_backbone_frozen':True,
  'claim_scope':'cross_layer_KV_sharing_only'}),flush=True)
 tokenizer=AutoTokenizer.from_pretrained(a.model,revision=a.revision,trust_remote_code=False)
 
@@ -75,7 +87,10 @@ def compute_loss(tokens):
 out=Path(a.out);out.mkdir(parents=True,exist_ok=True)
 config={k:v for k,v in vars(a).items() if k not in ('train_data','val_data')}
 config.update({'train_data_file':a.train_data,'val_data_file':a.val_data,'train_examples':len(train),
-               'val_examples':len(val),'trainable_params':trainable,'status':'b1_projector_training'})
+               'val_examples':len(val),'trainable_params':trainable,
+               'effective_projector_initialization':effective_init,
+               'pretrained_model_frozen':True,'warmup_checkpoint_init_metadata':ckpt_init,
+               'status':'b1_projector_training'})
 (out/'run_config.json').write_text(json.dumps(config,indent=2))
 optimizer=torch.optim.AdamW(bridge.parameters(),lr=a.lr,weight_decay=0.01)
 model.train();step=0;sample_idx=0;token_count=0
@@ -104,7 +119,8 @@ with metrics.open('a',encoding='utf-8') as logfile:
           'elapsed_seconds':round(elapsed,1),'tokens_per_second':round(token_count/max(1e-5,elapsed),2)}
         logfile.write(json.dumps(record)+'\n');logfile.flush();print(json.dumps(record),flush=True)
         if step%a.save_every==0 or step==a.steps:
-            save_bridge(bridge,out/f'adapter-step-{step:06d}.pt',model_id=a.model,model_revision=a.revision,spec=spec)
+            save_bridge(bridge,out/f'adapter-step-{step:06d}.pt',model_id=a.model,model_revision=a.revision,spec=spec,
+                        initialization=effective_init,training_stage='causal_lm_ce')
 # Frozen validation only after training; no hyperparameter selection on test split.
 model.eval()
 with torch.no_grad():
@@ -115,7 +131,8 @@ with torch.no_grad():
 summary={'status':'b1_first_training_completed','step':a.steps,'train_tokens':token_count,
  'val_nll':sum(vl)/len(vl),'val_examples':len(vl),
  'max_allocated_gib':torch.cuda.max_memory_allocated()/2**30,
- 'seconds':time.monotonic()-start,'claims_not_tested':['CED_prefill_skip','CSA2_sparse_attention','quality_retention']}
+ 'seconds':time.monotonic()-start,'projector_initialization':effective_init,
+ 'pretrained_backbone_frozen':True,'claims_not_tested':['CED_prefill_skip','CSA2_sparse_attention','quality_retention']}
 (out/'summary.json').write_text(json.dumps(summary,indent=2))
 print(json.dumps(summary),flush=True)
 handle.remove()
