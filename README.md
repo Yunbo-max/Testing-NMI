@@ -88,6 +88,33 @@ python scripts/benchmark.py --arm shared --revision "$MODEL_REVISION" --adapter 
 
 The benchmark script checks 16 vs 9 physically populated GQA KV groups. A successful forward/cache check does **not** verify backward, sustained H100 training, quality, multimodality, or serving-kernel performance.
 
+## Starting weights and training: **pretrained Qwen, not 27B from scratch**
+
+**Decision:** load the official pretrained \`Qwen/Qwen3.8-27B\` at a pinned HF revision. The Embedding, all 64 language blocks (48 Gated DeltaNet and 16 GQA), Q/O projections, FFNs and LM head **retain their pretrained weights**. First freeze the entire backbone and train only the new shared-KV bridge. No existing Transformer/GDN layer is deleted.
+
+| Part | Starting weights | Training in current B1b |
+|---|---|---|
+| Qwen backbone and late GQA Q/O | Original Qwen pretrained checkpoint | **Frozen** |
+| H32-to-K/V bridge matrices | **Copy layer-36 pretrained K/V projections** (default) | **Trainable** |
+| Bridge Key Norm | **Copy layer-36 pretrained KNorm** in both init arms | **Trainable** |
+| Alternative bridge matrices | Random matrices, \`random_linear\` control | **Trainable** |
+| Logits KL distillation, Q/O LoRA | Not present in current implementation | **Planned, not implemented** |
+
+$
+W_{\phi,0}^{K}=W_{36}^{K},\qquad
+W_{\phi,0}^{V}=W_{36}^{V},\qquad
+\theta_{\phi,0}^{\mathrm{KNorm}}=\theta_{36}^{\mathrm{KNorm}}.
+$
+
+**Identical starting weight matrices do not imply identical K/V activations**: the bridge projects layer-32 output, whereas original layer-36 K/V projections receive layer-36's normalized input. Each of the eight late GQA layers originally used different deeper representations; quality may drop and requires adaptation.
+
+- **Stage 0:** capture pretrained Qwen H32 and native eight-layer teacher K/V features (implemented extraction script).
+- **Stage 1:** offline bridge feature-matching warmup, with \`source36\` or \`random_linear\` init (implemented, does not load two 27B models).
+- **Stage 2:** end-to-end **next-token CE**, with original Qwen frozen and bridge trainable (entrypoint implemented; **real H100 execution unverified**).
+- **Stage 3:** teacher-logit KL and selected late Q/O LoRA only after an explicit later implementation and controlled study (**not implemented**).
+
+Record model SHA, initialization policy, warmed checkpoint provenance, actual training-token exposure, optimizer steps, VRAM, and held-out CE. Compare the two bridge initializations on identical data/budgets, but **a separately trained B0T original-model control is still required** to claim architecture-specific quality. Source36 copying is a hypothesis to evaluate, not a guarantee of quality preservation. See [weights and initialization](docs/WEIGHTS_AND_INITIALIZATION.md), [training](docs/TRAINING.md), and [H100 commands](docs/H100_COMMANDS.md).
+
 ## Experimental arms and implementation status
 
 | Arm | Modification | Purpose | Status |
